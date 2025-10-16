@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>6-канальный ЭКГ монитор</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f8fafc;
+      color: #1e293b;
+    }
+    h1 {
+      text-align: center;
+      margin: 0 0 24px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 24px;
+    }
+    .lead-group {
+      background: white;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      border: 1px solid #e2e8f0;
+    }
+    .lead-group h2 {
+      margin: 0 0 16px;
+      font-size: 1.3em;
+      font-weight: 600;
+      color: #334155;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .chart-container {
+      margin-bottom: 16px;
+    }
+    .chart-container h3 {
+      margin: 8px 0 6px;
+      font-size: 1em;
+      font-weight: 600;
+      color: #475569;
+    }
+    canvas {
+      width: 100% !important;
+      height: 100px !important;
+      background: #f8fafc;
+      border-radius: 6px;
+    }
+    .status {
+      text-align: center;
+      margin-top: 12px;
+      font-size: 0.85em;
+      color: #64748b;
+    }
+
+    /* === Стили для блоков прогноза === */
+    .prediction-section {
+      margin-top: 30px;
+      padding: 20px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      border: 1px solid #e2e8f0;
+    }
+    .prediction-section h2 {
+      margin-top: 0;
+      font-size: 1.4em;
+      color: #0f172a;
+    }
+    .prediction-buttons {
+      margin: 15px 0;
+    }
+    .prediction-buttons button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.95em;
+      margin-right: 10px;
+    }
+    .prediction-buttons button:hover {
+      background: #2563eb;
+    }
+    .prediction-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 15px;
+    }
+    .prediction-card {
+      padding: 15px;
+      background: #f1f5f9;
+      border-radius: 8px;
+    }
+    .prediction-card h3 {
+      margin: 0 0 10px;
+      color: #1e293b;
+    }
+    .diagnosis-item {
+      padding: 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .diagnosis-name {
+      font-weight: 600;
+      display: inline-block;
+      width: 200px;
+    }
+    .diagnosis-prob {
+      font-family: monospace;
+      color: #64748b;
+    }
+    .diagnosis-high {
+      color: #059669;
+      font-weight: bold;
+    }
+    .upload-section {
+      margin-top: 20px;
+      padding: 20px;
+      background: #f0f8ff;
+      border-radius: 12px;
+      border: 1px solid #bfdbfe;
+    }
+    .upload-section h3 {
+      margin-top: 0;
+      color: #1e3a8a;
+    }
+    .upload-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .upload-controls input[type="file"] {
+      padding: 4px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+    }
+    .error {
+      color: #ef4444;
+      margin-top: 8px;
+    }
+    .success {
+      color: #10b981;
+    }
+    .loading {
+      color: #64748b;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h1>ЭКГ в реальном времени — 6 отведений</h1>
+
+  <div class="grid">
+    <div class="lead-group">
+      <h2>Стандартные отведения</h2>
+      <div id="standard-leads"></div>
+    </div>
+    <div class="lead-group">
+      <h2>Усиленные отведения</h2>
+      <div id="augmented-leads"></div>
+    </div>
+  </div>
+
+  <div class="status" id="connection-status">Подключение к WebSocket...</div>
+
+  <!-- Прогноз по последней записи -->
+  <div class="prediction-section">
+    <h2>🧠 Прогноз модели по последней записи</h2>
+    <div class="prediction-buttons">
+      <button onclick="predictLatest()">Получить прогноз</button>
+      <small>Использует последнюю сохранённую запись</small>
+    </div>
+    <div id="prediction-result"></div>
+  </div>
+
+  <!-- Загрузка своего файла -->
+  <div class="upload-section">
+    <h3>📂 Загрузить свой файл (.npy)</h3>
+    <p>Файл должен содержать массив формы <code>(1000, 6)</code>.</p>
+    <div class="upload-controls">
+      <input type="file" id="uploadFile" accept=".npy">
+      <button onclick="uploadAndPredict()">Прогноз</button>
+    </div>
+    <div id="upload-result"></div>
+  </div>
+
+  <script>
+    // === Словарь для перевода классов ===
+    const CLASS_LABELS = {
+      'is_sinus_rhythm': 'Синусовый ритм',
+      'is_afib': 'Фибрилляция предсердий',
+      'is_aflt': 'Трепетание предсердий',
+      'is_pac': 'Наджелудочковые экстрасистолы',
+      'is_pvc': 'Желудочковые экстрасистолы',
+      'is_svt': 'Наджелудочковая тахикардия',
+      'is_sinus_arrhythmia': 'Синусовая аритмия',
+      'has_1avb': 'АВ-блокада 1 степени',
+      'has_2avb': 'АВ-блокада 2 степени',
+      'has_3avb': 'АВ-блокада 3 степени',
+      'has_rbbb': 'ПБЛНПГ (правая ножка)',
+      'has_lbbb': 'ПБЛНЛГ (левая ножка)',
+      'has_irbbb': 'НПБЛНПГ',
+      'has_ilbbb': 'НПБЛНЛГ',
+      'has_lafb': 'Блокада передней ветви',
+      'has_lpfb': 'Блокада задней ветви',
+      'has_wpw': 'Синдром WPW',
+      'has_bigeminy': 'Бигеминия',
+      'has_trigeminy': 'Тригеминия'
+    };
+
+    // === Графики (без изменений) ===
+    const leadConfig = {
+      I:    { color: '#1f77b4', target: 'standard-leads' },
+      II:   { color: '#ff7f0e', target: 'standard-leads' },
+      III:  { color: '#2ca02c', target: 'standard-leads' },
+      aVR:  { color: '#d62728', target: 'augmented-leads' },
+      aVL:  { color: '#9467bd', target: 'augmented-leads' },
+      aVF:  { color: '#8c564b', target: 'augmented-leads' }
+    };
+
+    const dataBuffers = {};
+    const charts = {};
+    const BUFFER_SIZE = 200;
+
+    Object.entries(leadConfig).forEach(([lead, config]) => {
+      const container = document.getElementById(config.target);
+      const chartContainer = document.createElement('div');
+      chartContainer.className = 'chart-container';
+      
+      const title = document.createElement('h3');
+      title.textContent = lead;
+      chartContainer.appendChild(title);
+
+      const canvas = document.createElement('canvas');
+      canvas.id = `chart-${lead}`;
+      chartContainer.appendChild(canvas);
+      container.appendChild(chartContainer);
+
+      dataBuffers[lead] = Array(BUFFER_SIZE).fill(512);
+
+      const ctx = canvas.getContext('2d');
+      charts[lead] = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: Array.from({ length: BUFFER_SIZE }, (_, i) => i),
+          datasets: [{
+            data: [...dataBuffers[lead]],
+            borderColor: config.color,
+            borderWidth: 1.8,
+            tension: 0.25,
+            fill: false,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { display: false },
+            y: {
+              min: 450,
+              max: 570,
+              display: false
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: false }
+          }
+        }
+      });
+    });
+
+    const statusEl = document.getElementById('connection-status');
+    const ws = new WebSocket(`ws://${window.location.host}/ws`);
+
+    ws.onopen = () => {
+      statusEl.textContent = '✅ Подключено к ЭКГ';
+      statusEl.style.color = '#10b981';
+    };
+
+    ws.onerror = (err) => {
+      statusEl.textContent = '❌ Ошибка WebSocket';
+      statusEl.style.color = '#ef4444';
+      console.error('WebSocket error:', err);
+    };
+
+    ws.onclose = () => {
+      statusEl.textContent = '🔌 Соединение закрыто';
+      statusEl.style.color = '#94a3b8';
+    };
+
+    let latestData = null;
+    let lastUpdateTime = 0;
+
+    ws.onmessage = (event) => {
+      try {
+        latestData = JSON.parse(event.data);
+      } catch (e) {
+        console.warn('Неверный формат данных:', event.data);
+      }
+    };
+
+    function animate() {
+      const now = performance.now();
+      if (now - lastUpdateTime >= 50 && latestData) {
+        Object.keys(leadConfig).forEach(lead => {
+          const value = latestData[lead];
+          if (typeof value === 'number' && !isNaN(value) && isFinite(value)) {
+            const buf = dataBuffers[lead];
+            buf.shift();
+            buf.push(value);
+            charts[lead].data.datasets[0].data = [...buf];
+
+            const minVal = Math.min(...buf);
+            const maxVal = Math.max(...buf);
+            const margin = Math.max(10, (maxVal - minVal) * 0.1);
+            charts[lead].options.scales.y.min = minVal - margin;
+            charts[lead].options.scales.y.max = maxVal + margin;
+          }
+        });
+        Object.values(charts).forEach(chart => chart.update('none'));
+        lastUpdateTime = now;
+      }
+      requestAnimationFrame(animate);
+    }
+
+    animate();
+
+    // === Отображение прогноза ===
+    function renderPredictions(predictions, container) {
+      if (!predictions || Object.keys(predictions).length === 0) {
+        container.innerHTML = '<div class="error">Нет данных для отображения</div>';
+        return;
+      }
+
+      // Фильтруем только значимые вероятности (≥ 0.05)
+      const significant = Object.entries(predictions)
+        .filter(([, v]) => v.probability >= 0.05)
+        .sort(([, a], [, b]) => b.probability - a.probability);
+
+      if (significant.length === 0) {
+        container.innerHTML = '<div>Нет значимых находок (все вероятности < 5%)</div>';
+        return;
+      }
+
+      let html = '';
+      significant.forEach(([key, val]) => {
+        const label = CLASS_LABELS[key] || key;
+        const prob = val.probability.toFixed(4);
+        const isHigh = val.probability >= 0.1;
+        html += `
+          <div class="diagnosis-item">
+            <span class="diagnosis-name">${label}</span>
+            <span class="diagnosis-prob ${isHigh ? 'diagnosis-high' : ''}">${prob}</span>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    }
+
+    function displayPrediction(data, containerId) {
+      const container = document.getElementById(containerId);
+      if (data.error) {
+        container.innerHTML = `<div class="error">Ошибка: ${data.error}</div>`;
+        return;
+      }
+
+      const rawPred = data.raw_prediction?.prediction;
+      const filteredPred = data.filtered_prediction?.prediction;
+
+      if (rawPred || filteredPred) {
+        container.innerHTML = `
+          <div class="prediction-grid">
+            ${rawPred ? `
+              <div class="prediction-card">
+                <h3>Сырые данные</h3>
+                <div id="raw-pred-${containerId}"></div>
+              </div>
+            ` : ''}
+            ${filteredPred ? `
+              <div class="prediction-card">
+                <h3>Отфильтрованные</h3>
+                <div id="filtered-pred-${containerId}"></div>
+              </div>
+            ` : ''}
+          </div>
+        `;
+
+        if (rawPred) {
+          renderPredictions(rawPred, document.getElementById(`raw-pred-${containerId}`));
+        }
+        if (filteredPred) {
+          renderPredictions(filteredPred, document.getElementById(`filtered-pred-${containerId}`));
+        }
+      } else {
+        // Для загрузки файла
+        renderPredictions(data.prediction?.prediction, container);
+      }
+    }
+
+    async function predictLatest() {
+      const resultDiv = document.getElementById('prediction-result');
+      resultDiv.innerHTML = '<div class="loading">Анализ записи...</div>';
+      try {
+        const res = await fetch('/predict_latest');
+        const data = await res.json();
+        displayPrediction(data, 'prediction-result');
+      } catch (e) {
+        resultDiv.innerHTML = `<div class="error">Ошибка: ${e.message}</div>`;
+      }
+    }
+
+    async function uploadAndPredict() {
+      const fileInput = document.getElementById('uploadFile');
+      const file = fileInput.files[0];
+      const resultDiv = document.getElementById('upload-result');
+      
+      if (!file) {
+        resultDiv.innerHTML = '<div class="error">Выберите файл .npy</div>';
+        return;
+      }
+
+      if (!file.name.endsWith('.npy')) {
+        resultDiv.innerHTML = '<div class="error">Поддерживаются только файлы .npy</div>';
+        return;
+      }
+
+      resultDiv.innerHTML = '<div class="loading">Загрузка и анализ...</div>';
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/predict_upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (res.ok) {
+          displayPrediction(data, 'upload-result');
+        } else {
+          resultDiv.innerHTML = `<div class="error">Ошибка: ${data.error || 'Неизвестная ошибка'}</div>`;
+        }
+      } catch (e) {
+        resultDiv.innerHTML = `<div class="error">Ошибка сети: ${e.message}</div>`;
+      }
+    }
+  </script>
+</body>
+</html>

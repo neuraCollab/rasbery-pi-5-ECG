@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../arduino_ecg"
+		},
+		{
+			"name": "ad168",
+			"path": "."
+		}
+	],
+	"settings": {}
+}
