@@ -430,6 +430,14 @@ async def websocket_endpoint(websocket: WebSocket):
         
 from fastapi import File, UploadFile
 from fastapi.responses import JSONResponse
+import sys, os
+try:
+    # When running as a package: uvicorn rp.main:app
+    from .compare_model import compare_simulation_with_recording, generate_mock_ecg_data
+except Exception:
+    # When running from rp directory: uvicorn main:app
+    sys.path.append(os.path.dirname(__file__))
+    from compare_model import compare_simulation_with_recording, generate_mock_ecg_data
 
 @app.get("/predict_latest")
 async def predict_latest():
@@ -478,3 +486,39 @@ async def predict_upload(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Ошибка загрузки/предсказания: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/generate_mock_data")
+async def generate_mock_data(heart_rate: float = 75.0, length: int = 1000):
+    """Генерирует моковые ЭКГ-данные для тестирования и сохраняет их в recordings."""
+    try:
+        mock_data = generate_mock_ecg_data(
+            length=length,
+            fs=100,
+            heart_rate=heart_rate,
+            baseline=512.0,
+            noise_level=5.0
+        )
+        
+        # Сохраняем как raw и filtered (для совместимости с существующим кодом)
+        idx = len([f for f in os.listdir(RECORDINGS_DIR) if f.endswith('.npy')]) // 2 + 1
+        base_path = os.path.join(RECORDINGS_DIR, f"ecg_mock_{idx:04d}")
+        
+        # Сохраняем как filtered (можно использовать и для raw)
+        np.save(f"{base_path}_filtered.npy", mock_data)
+        np.save(f"{base_path}_raw.npy", mock_data)
+        
+        logger.info(f"✅ Моковые данные созданы: {base_path}_filtered.npy")
+        
+        return {
+            "message": "Моковые данные успешно созданы",
+            "filename": f"ecg_mock_{idx:04d}",
+            "path_raw": f"{base_path}_raw.npy",
+            "path_filtered": f"{base_path}_filtered.npy",
+            "shape": mock_data.shape,
+            "heart_rate": heart_rate,
+        }
+    except Exception as e:
+        logger.error(f"Ошибка генерации моковых данных: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+

@@ -1,0 +1,4 @@
+Dominant frequency: 0.9766 Hz
+heart (0.5–5Hz): 6.0111e-02
+resp (0.1–0.5Hz): 3.0603e-03
+high (>40Hz): 3.3375e-04

@@ -62,7 +62,8 @@ VPS (159.255.36.113)
    ```
 3. Запустите сервер:
    ```bash
-   python3 app.py
+   cd ./rp && ./venv/bin/activate
+   uvicorn main:app --host localhost --port 8000 --reload --log-level debug
    ```
 
 ### На VPS (для frp)

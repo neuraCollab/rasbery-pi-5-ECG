@@ -1,0 +1,11 @@
+source_file: ecg_mock_0001_filtered.npy
+electrode_positions:
+[[ 0.     0.18   0.   ]
+ [ 0.108 -0.072  0.   ]
+ [-0.108 -0.072  0.   ]
+ [ 0.162  0.     0.018]
+ [-0.162  0.     0.018]
+ [ 0.    -0.18   0.   ]]
+regularization_lambda: 0.001
+RMSE: 1.802590e-01
+R2: 0.506828
